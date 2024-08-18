@@ -3,33 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Image</title>
+    <title>Upload Image for OCR</title>
     <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
-        /* 이미지가 너무 크게 표시되지 않도록 최대 너비와 높이를 설정 */
         .result-img {
-            max-width: 45%; /* 이미지의 최대 너비를 화면의 45%로 설정 */
-            height: auto;   /* 비율에 맞게 높이 자동 조정 */
-            margin: 0 2.5%; /* 이미지를 가운데 정렬하고 이미지 사이에 여백을 추가 */
+            max-width: 45%;
+            height: auto;
+            margin: 0 2.5%;
         }
-
-        /* 이미지를 가로로 나란히 배치하는 컨테이너 */
         .image-container {
             display: flex;
             justify-content: center;
             align-items: center;
-            flex-wrap: wrap; /* 필요하면 줄 바꿈 */
+            flex-wrap: wrap;
             margin-top: 20px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center mt-5">Upload a Car Image</h1>
+        <h1 class="text-center mt-5">Upload an Image for OCR</h1>
         <div class="text-center mt-5">
             <input type="file" id="fileInput" class="form-control-file">
-            <button onclick="uploadImage()" class="btn btn-success mt-3">Apply Detection</button>
+            <button onclick="uploadImage()" class="btn btn-success mt-3">Perform OCR</button>
         </div>
         <div id="result" class="mt-5"></div>
     </div>
@@ -46,22 +43,21 @@
             const formData = new FormData();
             formData.append('file', file);
 
-            axios.post('/api/upload', formData, {
+            axios.post('/api/ocr', formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 }
             })
             .then(response => {
                 const data = response.data;
-                console.log(data)
                 const resultDiv = document.getElementById('result');
                 resultDiv.innerHTML = `
-                    <h2 class="text-center mt-5">Detection Results ✅</h2>
+                    <h2 class="text-center mt-5">OCR Result ✅</h2>
                     <div class="image-container">
-                        ${data.prediction ? `<img src="data:image/jpeg;base64,${data.prediction}" class="img-fluid result-img" alt="Detected Image">` : ''}
-                        ${data.license_plate_image ? `<img src="data:image/jpeg;base64,${data.license_plate_image}" class="img-fluid result-img" alt="Detected Image">` : ''}
+                        ${data.original_image ? `<img src="data:image/jpeg;base64,${data.original_image}" class="img-fluid result-img" alt="Original Image">` : ''}
+                        ${data.boxed_image ? `<img src="data:image/jpeg;base64,${data.boxed_image}" class="img-fluid result-img" alt="Boxed Image">` : ''}
                     </div>
-                    ${data.texts && data.texts.length > 0 ? '<h2 class="mt-5">License Number:</h2><ul class="list-group">' + data.texts.map(text => `<li class="list-group-item">${text}</li>`).join('') + '</ul>' : ''}
+                    ${data.ocr_text ? `<h2 class="mt-5">Extracted Text:</h2><p>${data.ocr_text}</p>` : ''}
                 `;
             })
             .catch(error => {
