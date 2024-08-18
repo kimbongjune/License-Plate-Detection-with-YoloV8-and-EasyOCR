@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Plate Detection</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mt-5">💥 License Car Plate Detection 🚗</h1>
+        <div class="text-center mt-5">
+            <img src="{{ url_for('static', filename='images/test_background.jpg') }}" class="img-fluid" width="500" alt="Background Image">
+        </div>
+        <div class="text-center mt-5">
+            <h2>Computer Vision Detection with YoloV8 🧪</h2>
+            <img src="{{ url_for('static', filename='images/plate_test.jpg') }}" class="img-fluid" alt="Plate Test Image">
+        </div>
+        <div class="text-center mt-5">
+            <p>The different models detect the car and the license plate in a given image, then extract the info about the license using EasyOCR, and crop and save the license plate as an image, along with a CSV file containing all the data.</p>
+            <a href="{{ url_for('upload') }}" class="btn btn-primary">Upload an Image</a>
+        </div>
+    </div>
+</body>
+</html>

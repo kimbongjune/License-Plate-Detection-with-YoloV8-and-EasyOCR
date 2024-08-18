@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detection Results</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mt-5">Detection Results ✅</h1>
+        <div class="text-center mt-5">
+            {% if prediction %}
+                <img src="data:image/jpeg;base64,{{ prediction }}" class="img-fluid" alt="Detected Image">
+            {% endif %}
+            {% if texts %}
+                <h2 class="mt-5">License Number:</h2>
+                <ul class="list-group">
+                    {% for text in texts | unique %}
+                        <li class="list-group-item">{{ text }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+        <div class="text-center mt-5">
+            <a href="{{ url_for('index') }}" class="btn btn-primary">Go Back</a>
+        </div>
+    </div>
+</body>
+</html>
