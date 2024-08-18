@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 from paddleocr import PaddleOCR
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -6,7 +6,6 @@ import base64
 from io import BytesIO
 from ultralytics import YOLO
 import cv2
-import easyocr
 import uuid
 import os
 import re
@@ -53,10 +52,93 @@ def upload():
                 return render_template('results.html', prediction=prediction)
     return render_template('upload.html')
 
-def numpy_array_to_base64(img_array):
-    pil_img = Image.fromarray(img_array)
+@app.route('/api/upload', methods=['POST'])
+def upload_api():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    image = np.array(Image.open(file))
+    results = model_prediction(image)
+    
+    print(results)
+
+    if len(results) >= 3:
+        prediction = numpy_array_to_base64(results[0])
+        texts = list(set(results[1]))  # 중복된 텍스트 제거
+        pil_img_base64 = results[3]
+
+        response = {
+            "prediction": prediction,
+            "texts": texts,
+            "license_plate_image": pil_img_base64  # Base64 인코딩된 이미지
+        }
+        return jsonify(response)
+    else:
+        prediction = numpy_array_to_base64(results[0])
+        return jsonify({"prediction": prediction})
+    
+@app.route('/api/ocr', methods=['GET', 'POST'])
+def ocr_api():
+    if request.method == "POST":
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+
+        image = np.array(Image.open(file))
+        ocr_text, original_img, boxed_img = ocr_image(image)
+
+        response = {
+            "original_image": original_img,
+            "boxed_image": boxed_img,
+            "ocr_text": ocr_text
+        }
+        return jsonify(response)
+    else:
+        return render_template('ocr_upload.html')
+    
+def pil_image_to_base64(pil_img):
     buff = BytesIO()
     pil_img.save(buff, format="JPEG")
+    img_str = base64.b64encode(buff.getvalue()).decode("utf-8")
+    return img_str
+    
+def ocr_image(image):
+    # PaddleOCR로 텍스트 인식
+    result = ocr.ocr(image, cls=True)
+    texts = [line[1][0] for line in result[0]]
+    
+    # 결과 이미지를 생성 (박스 처리된 이미지)
+    pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    for line in result[0]:
+        box = line[0]
+        draw.rectangle([tuple(box[0]), tuple(box[2])], outline=(0, 255, 0), width=2)
+    
+    # 원본 이미지를 Base64로 인코딩
+    original_img_base64 = numpy_array_to_base64(image)
+    # 박스 처리된 이미지를 Base64로 인코딩
+    boxed_img_base64 = pil_image_to_base64(pil_img)
+    
+    # 텍스트를 한 줄로 연결
+    cleaned_text = " ".join(texts)
+
+    # 결과를 반환
+    return cleaned_text, original_img_base64, boxed_img_base64
+
+def numpy_array_to_base64(img_array):
+    # RGBA 이미지를 RGB로 변환
+    if img_array.shape[2] == 4:  # 채널이 4개인 경우
+        img_array = Image.fromarray(img_array).convert('RGB')
+    else:
+        img_array = Image.fromarray(img_array)
+    
+    buff = BytesIO()
+    img_array.save(buff, format="JPEG")
     img_str = base64.b64encode(buff.getvalue()).decode("utf-8")
     return img_str
 
@@ -92,7 +174,7 @@ def model_prediction(img):
             cv2.imwrite(os.path.join(folder_path, img_name), license_plate_crop)
 
             license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY) 
-            license_plate_text, license_plate_text_score = read_license_plate(license_plate_crop, img)
+            license_plate_text, license_plate_text_score, pil_img_base64  = read_license_plate(license_plate_crop, img)
             licenses_texts.append(license_plate_text)
 
             if license_plate_text is not None and license_plate_text_score is not None:
@@ -106,7 +188,7 @@ def model_prediction(img):
 
         write_csv(results, f"./csv_detections/detection_results.csv")
         img_wth_box = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        return [img_wth_box, licenses_texts, license_plate_crops_total]
+        return [img_wth_box, licenses_texts, license_plate_crops_total, pil_img_base64]
     
     else: 
         img_wth_box = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -181,7 +263,7 @@ def upscale_and_enhance_image(image, scale_factor=2):
 
 def read_license_plate(license_plate_crop, img):
     # 기울기 보정
-    license_plate_crop = correct_skew(license_plate_crop)
+    #license_plate_crop = correct_skew(license_plate_crop)
 
     # 이미지 업스케일링 및 화질 개선
     license_plate_crop = upscale_and_enhance_image(license_plate_crop)
@@ -203,9 +285,9 @@ def read_license_plate(license_plate_crop, img):
         if score >= 0.7:
             filtered_texts.append((text, box, score))
 
-    # 좌표를 기준으로 텍스트 정렬 (좌측에서 우측 순)
+    # Y 좌표를 기준으로 먼저 정렬하고, 같은 Y 좌표 내에서는 X 좌표를 기준으로 정렬
     filtered_texts = sorted(filtered_texts, key=lambda x: x[1][0][0])
-
+    
     # 정렬된 결과에서 텍스트, 박스, 점수 분리
     texts = [item[0] for item in filtered_texts]
     boxes = [item[1] for item in filtered_texts]
@@ -236,14 +318,16 @@ def read_license_plate(license_plate_crop, img):
         draw.text((bottom_left[0], bottom_left[1] + 5), display_text, font=font, fill=(255, 0, 0))  # 빨간색 텍스트
 
     # 결과 이미지를 저장
-    pil_img.save("a.jpg")
+    buffered = BytesIO()
+    pil_img.save(buffered, format="JPEG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
     # 필터링된 점수들로 점수 계산
     total_score = sum(scores)
     average_score = total_score / len(scores) if len(scores) > 0 else 0
 
     # 최종 텍스트와 평균 점수를 반환
-    return cleaned_text, average_score
+    return cleaned_text, average_score, img_base64
     
 def read_license_plate_paddle(license_plate_crop):
     result = ocr.ocr(license_plate_crop, cls=True)
