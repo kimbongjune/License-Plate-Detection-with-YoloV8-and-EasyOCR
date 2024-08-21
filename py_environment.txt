@@ -1,3 +1,12 @@
 python -m venv myenvc
+//윈도우
 myenvc\Scripts\activate
+
+//맥
+source myenvc/bin/activate
+
+//취소
 deactivate
+
+//paddlepaddle 맥 에러 조치
+https://github.com/PaddlePaddle/PaddleOCR/discussions/13060?converting=1
