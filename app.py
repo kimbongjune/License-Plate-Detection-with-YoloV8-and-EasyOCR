@@ -1,16 +1,41 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from paddleocr import PaddleOCR
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from realesrgan import RealESRGANer
+from PIL import Image, ImageDraw, ImageFont, ExifTags
 import base64
 from io import BytesIO
 from ultralytics import YOLO
 import cv2
-import uuid
-import os
 import re
+import os
+from flask_cors import CORS
+# import torch
+# from basicsr.archs.rrdbnet_arch import RRDBNet
+
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# # Real-ESRGAN 모델 경로
+# model_path = './models/RealESRGAN_x4plus.pth'
+
+# model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+
+# # RealESRGANer 클래스 인스턴스화
+# upscaler = RealESRGANer(
+#     scale=2,  # 업스케일링 배율 설정
+#     model_path=model_path,  # 모델 가중치 파일 경로
+#     model=model,  # 생성한 모델 전달
+#     tile=0,  # 타일 크기, 메모리 문제를 피하기 위해 사용할 수 있음
+#     tile_pad=10,
+#     pre_pad=10,
+#     half=False,
+#     device=device
+# )
+
+
 
 app = Flask(__name__)
+CORS(app)
 
 # 모델 경로 설정
 LICENSE_MODEL_DETECTION_DIR = './models/license_plate_detector.pt'
@@ -18,7 +43,7 @@ COCO_MODEL_DIR = "./models/yolov8n.pt"
 folder_path = "./licenses_plates_imgs_detected/"
 
 # OCR 리더 초기화
-ocr = PaddleOCR(lang='korean')
+ocr = PaddleOCR(use_angle_cls=True,lang='korean')
 
 # 차량 분류 번호 설정
 vehicles = [2]
@@ -31,39 +56,21 @@ license_plate_detector = YOLO(LICENSE_MODEL_DETECTION_DIR)
 def index():
     return render_template('index.html')
 
-@app.route('/upload', methods=['GET', 'POST'])
-def upload():
-    if request.method == 'POST':
-        if 'file' not in request.files:
-            return redirect(request.url)
-        file = request.files['file']
-        if file.filename == '':
-            return redirect(request.url)
-        if file:
-            image = np.array(Image.open(file))
-            results = model_prediction(image)
-            if len(results) == 3:
-                prediction = numpy_array_to_base64(results[0])  # 이미지 배열을 Base64로 인코딩
-                texts = results[1]
-                license_plate_crop = results[2]
-                return render_template('results.html', prediction=prediction, texts=texts, license_plate_crop=license_plate_crop)
-            else:
-                prediction = numpy_array_to_base64(results[0])
-                return render_template('results.html', prediction=prediction)
-    return render_template('upload.html')
-
 @app.route('/api/upload', methods=['POST'])
 def upload_api():
+    print("call /api/upload")
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
     file = request.files['file']
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
-
-    image = np.array(Image.open(file))
-    results = model_prediction(image)
     
-    print(results)
+    image = Image.open(file)
+    image = correct_image_orientation(image)
+
+    image = np.array(image)
+    cv2.imwrite("after_processing.jpg", image)
+    results = model_prediction(image)
 
     if len(results) >= 3:
         prediction = numpy_array_to_base64(results[0])
@@ -100,6 +107,30 @@ def ocr_api():
         return jsonify(response)
     else:
         return render_template('ocr_upload.html')
+
+def correct_image_orientation(image):
+    try:
+        # EXIF 데이터에서 orientation 태그를 찾습니다.
+        for orientation in ExifTags.TAGS.keys():
+            if ExifTags.TAGS[orientation] == 'Orientation':
+                break
+
+        exif = image._getexif()
+
+        if exif is not None:
+            orientation = exif.get(orientation, 1)
+
+            if orientation == 3:
+                image = image.rotate(180, expand=True)
+            elif orientation == 6:
+                image = image.rotate(270, expand=True)
+            elif orientation == 8:
+                image = image.rotate(90, expand=True)
+    except (AttributeError, KeyError, IndexError):
+        # EXIF 정보가 없거나 처리 중 문제가 발생해도 그대로 진행
+        pass
+
+    return image
     
 def pil_image_to_base64(pil_img):
     buff = BytesIO()
@@ -146,6 +177,9 @@ def model_prediction(img):
     license_numbers = 0
     results = {}
     licenses_texts = []
+
+    #img, _ = upscaler.enhance(img, outscale=4)
+
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
     object_detections = coco_model(img)[0]
@@ -170,10 +204,8 @@ def model_prediction(img):
 
             license_plate_crop = img[int(y1):int(y2), int(x1): int(x2), :]
 
-            img_name = '{}.jpg'.format(uuid.uuid1())
-            cv2.imwrite(os.path.join(folder_path, img_name), license_plate_crop)
+            # license_plate_crop, _ = upscaler.enhance(license_plate_crop, outscale=2)
 
-            license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY) 
             license_plate_text, license_plate_text_score, pil_img_base64  = read_license_plate(license_plate_crop, img)
             licenses_texts.append(license_plate_text)
 
@@ -266,10 +298,14 @@ def read_license_plate(license_plate_crop, img):
     #license_plate_crop = correct_skew(license_plate_crop)
 
     # 이미지 업스케일링 및 화질 개선
+    print("read license")
     license_plate_crop = upscale_and_enhance_image(license_plate_crop)
 
     # PaddleOCR로 텍스트 인식
+    print("read text")
     tests = ocr.ocr(license_plate_crop, cls=True)
+
+    print("read text complete")
 
     # 필터링된 텍스트, 박스, 점수를 저장할 리스트
     filtered_texts = []
@@ -328,35 +364,6 @@ def read_license_plate(license_plate_crop, img):
 
     # 최종 텍스트와 평균 점수를 반환
     return cleaned_text, average_score, img_base64
-    
-def read_license_plate_paddle(license_plate_crop):
-    result = ocr.ocr(license_plate_crop, cls=True)
-
-    # PIL의 이미지를 수정하기 위한 객체 생성
-    pil_img = Image.fromarray(cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(pil_img)
-    font_path = "font/NanumGothicBold.ttf"  # 폰트 파일 경로 설정
-    font = ImageFont.truetype(font_path, 12)  # 폰트 크기 설정
-
-    # 결과 시각화
-    boxes = [line[0] for line in result[0]]
-    texts = [line[1][0] for line in result[0]]
-    scores = [line[1][1] for line in result[0]]
-
-    # 이미지에 박스와 텍스트 그리기
-    for (box, text, score) in zip(boxes, texts, scores):
-        (top_left, top_right, bottom_right, bottom_left) = box
-        top_left = tuple(map(int, top_left))
-        bottom_right = tuple(map(int, bottom_right))
-
-        # 박스 그리기
-        draw.rectangle([top_left, bottom_right], outline=(0, 255, 0), width=2)
-        draw.text(bottom_right, f'{text} ({score:.2f})', font=font, fill=(255, 0, 0))  # 빨간색 텍스트
-    pil_img.save("a.jpg")
-    # 시각화된 이미지를 다시 넘파이 배열로 변환
-    img_with_text = np.array(pil_img)
-    
-    return img_with_text, texts, scores
 
 def write_csv(results, output_path):
     with open(output_path, 'w') as f:
@@ -386,4 +393,4 @@ def write_csv(results, output_path):
         f.close()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5500)
